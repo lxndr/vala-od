@@ -1,6 +1,7 @@
-namespace OOXML {
+namespace OD {
 
 
+[Compact]
 public class Reader {
 	public enum CellType {
 		BOOLEAN,
@@ -16,9 +17,15 @@ public class Reader {
 	private ShareableList<TextValue> strings;
 
 
-	public Reader () {
+	public OoxmlReader () throws Error {
+		
+
+
 		strings = ShareableList.new_for_text ();
 	}
+
+
+
 
 
 	private Error unknown_tag (Xml.Node* node) {
