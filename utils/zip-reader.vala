@@ -2,11 +2,11 @@ namespace OD {
 
 
 public struct ZipEntity {
-	string file_name;
+	string name;
 	uint16 compression_method;
 	uint32 compressed_size;
 	uint32 uncompressed_size;
-	uint32 header_offset;
+	int64 offset;
 }
 
 
@@ -47,7 +47,7 @@ public class ZipReader {
 
 			var entity = ZipEntity ();
 			stream.skip (4); /* version, version_needed */
-			var flags = stream.read_uint16 ();
+			stream.skip (2); /* flags */
 			entity.compression_method = stream.read_uint16 ();
 			stream.skip (8); /* mod time, mod date, crc32 */
 			entity.compressed_size = stream.read_uint32 ();
@@ -56,12 +56,47 @@ public class ZipReader {
 			var extra_length = stream.read_uint16 ();
 			var comment_length = stream.read_uint16 ();
 			stream.skip (8); /* disk number start, internat attrs, externat attrs */
-			entity.header_offset = stream.read_uint32 ();
-			entity.file_name = read_string (stream, file_name_length);
+			entity.offset = stream.read_uint32 ();
+			entity.name = read_string (stream, file_name_length);
 			stream.skip (extra_length);
-			stream.skip (extra_length);
+			stream.skip (comment_length);
 			entity_list.add (entity);
 		}
+
+		/* skip entity headers */
+		foreach (var entity in entity_list) {
+			stream.seek (entity.offset, SeekType.SET);
+
+			signature = stream.read_uint32 ();
+			if (signature != 0x04034b50)
+				throw new DocumentError.ZIP ("Wrong local header signature");
+
+			var version = stream.read_uint16 ();
+			if (version != 0x14)
+				throw new DocumentError.ZIP ("Unsupported local header version");
+			stream.skip (2); /* flags */
+			if (stream.read_uint16 () != entity.compression_method)
+				throw new DocumentError.ZIP ("Compression method mismatch between local header and central directory");
+			stream.skip (8);
+			if (stream.read_uint32 () != entity.compressed_size)
+				throw new DocumentError.ZIP ("Compressed size mismatch between local header and central directory");
+			if (stream.read_uint32 () != entity.uncompressed_size)
+				throw new DocumentError.ZIP ("Uncompressed size mismatch between local header and central directory");
+			var name_length = stream.read_uint16 ();
+			var extra_length = stream.read_uint16 ();
+			if (read_string (stream, name_length) != entity.name)
+				throw new DocumentError.ZIP ("File name mismatch between local header and central directory");
+			stream.skip (extra_length);
+			entity.offset = stream.tell ();
+		}
+	}
+
+
+	public Gee.List<string> file_list () {
+		var list = new Gee.ArrayList<string> ();
+		foreach (var entity in entity_list)
+			list.add (entity.name);
+		return list;
 	}
 
 
@@ -69,6 +104,25 @@ public class ZipReader {
 		var buf = string.nfill (length, '.');
 		stm.read (buf.data);
 		return buf;
+	}
+
+
+	public InputStream? open_file (string path) throws Error {
+		var entity = find_entity (path);
+		if (entity == null)
+			return null;
+
+		stream.seek (entity.offset, SeekType.SET);
+		return new ConverterInputStream (stream,
+				new ZlibDecompressor (ZlibCompressorFormat.RAW));
+	}
+
+
+	private ZipEntity? find_entity (string name) {
+		foreach (var entity in entity_list)
+			if (entity.name == name)
+				return entity;
+		return null;
 	}
 }
 
